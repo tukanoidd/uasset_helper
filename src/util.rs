@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 
 pub struct SplitVecContainer<L, R> {
@@ -38,7 +39,7 @@ impl<L, R> From<SplitVecContainer<L, R>> for (Vec<L>, Vec<R>) {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum SortOrder {
     Ascending,
     Descending,
@@ -70,4 +71,15 @@ impl SortOrder {
 
 pub fn path_to_str(path: impl AsRef<Path>) -> String {
     path.as_ref().to_str().unwrap().to_string()
+}
+
+pub fn save_to_clipboard<'a>(clipboard: &mut arboard::Clipboard, text: impl Into<Cow<'a, str>>) {
+    match clipboard.set_text(text) {
+        Ok(_) => {
+            log::info!("Copied text to clipboard");
+        }
+        Err(err) => {
+            log::error!("Failed to copy text to clipboard: {}", err);
+        }
+    }
 }

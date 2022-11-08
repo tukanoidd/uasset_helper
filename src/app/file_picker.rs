@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
-use crate::app::interactable_text::interactive_text_tooltip;
 use iced::{button, tooltip, Alignment, Button, Color, Row, Text};
 use rfd::AsyncFileDialog;
 
-use super::GuiAppMessage;
+use crate::app::interactable_text::interactive_text_tooltip;
 
 pub async fn open(asset: bool) -> Option<PathBuf> {
     let start_dir = dirs::home_dir().unwrap_or_default();
@@ -31,23 +30,30 @@ pub async fn open(asset: bool) -> Option<PathBuf> {
     }
 }
 
-pub fn widget<'state>(
-    state: &'state mut button::State,
-    asset: bool,
+pub fn widget<'a, Message>(
+    state: &'a mut button::State,
     button_text: &str,
     text: &str,
     tooltip: Option<String>,
-) -> Row<'state, GuiAppMessage> {
+    (text_on_press, text_on_shift_press): (Option<Message>, Option<Message>),
+    button_on_press: Message,
+) -> Row<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    let tooltip = tooltip.map(|t| (t, tooltip::Position::Bottom, None));
+
     let text = interactive_text_tooltip(
         text,
-        tooltip.map(|t| (t, tooltip::Position::Bottom, None)),
+        tooltip,
         None::<Color>,
+        (text_on_press, text_on_shift_press),
         (None, None, None),
     );
 
     Row::with_children(vec![
         Button::new(state, Text::new(button_text))
-            .on_press(GuiAppMessage::OpenFilePicker(asset))
+            .on_press(button_on_press)
             .into(),
         text,
     ])

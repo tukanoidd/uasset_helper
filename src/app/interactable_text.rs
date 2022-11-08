@@ -10,8 +10,6 @@ use iced_native::{
     touch, Clipboard, Event, Layout, Shell, Widget,
 };
 
-use crate::app::GuiAppMessage;
-
 pub struct InteractiveText<Message> {
     text: Text,
 
@@ -220,24 +218,35 @@ where
     }
 }
 
-pub fn interactive_text_tooltip<'a>(
+pub fn interactive_text_tooltip<'a, Message>(
     text: impl Into<String> + Clone,
     tooltip: Option<(String, tooltip::Position, Option<u16>)>,
     color: Option<impl Into<Color>>,
+    (on_press, on_shift_press): (Option<Message>, Option<Message>),
     (on_hover_in, on_shift_hover, on_hover_out): (
-        Option<GuiAppMessage>,
-        Option<GuiAppMessage>,
-        Option<GuiAppMessage>,
+        Option<Message>,
+        Option<Message>,
+        Option<Message>,
     ),
-) -> Element<'a, GuiAppMessage> {
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
     let mut text_widget = Text::new(text.clone()).size(16).width(Length::Shrink);
 
     if let Some(color) = color {
         text_widget = text_widget.color(color);
     }
 
-    let mut text_widget =
-        InteractiveText::new(text_widget).on_press(GuiAppMessage::SaveTextToClipboard(text.into()));
+    let mut text_widget = InteractiveText::new(text_widget);
+
+    if let Some(on_press) = on_press {
+        text_widget = text_widget.on_press(on_press);
+    }
+
+    if let Some(on_shift_press) = on_shift_press {
+        text_widget = text_widget.on_shift_press(on_shift_press);
+    }
 
     if let Some(on_hover_in) = on_hover_in {
         text_widget = text_widget.on_hover_in(on_hover_in);
@@ -252,13 +261,9 @@ pub fn interactive_text_tooltip<'a>(
     }
 
     match tooltip {
-        Some((tooltip, position, size)) => Tooltip::new(
-            text_widget.on_shift_press(GuiAppMessage::SaveTextToClipboard(tooltip.clone())),
-            tooltip,
-            position,
-        )
-        .size(size.unwrap_or(16))
-        .into(),
+        Some((tooltip, position, size)) => Tooltip::new(text_widget, tooltip, position)
+            .size(size.unwrap_or(16))
+            .into(),
         None => text_widget.into(),
     }
 }
