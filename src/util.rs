@@ -38,6 +38,36 @@ impl<L, R> From<SplitVecContainer<L, R>> for (Vec<L>, Vec<R>) {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SortOrder {
+    Ascending,
+    Descending,
+}
+
+impl SortOrder {
+    #[inline]
+    pub fn toggle(&mut self) {
+        *self = self.toggled();
+    }
+
+    pub fn toggled(&self) -> Self {
+        match self {
+            SortOrder::Ascending => SortOrder::Descending,
+            SortOrder::Descending => SortOrder::Ascending,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_ascending(&self) -> bool {
+        matches!(self, Self::Ascending)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_descending(&self) -> bool {
+        matches!(self, Self::Descending)
+    }
+}
+
 pub fn path_to_str(path: impl AsRef<Path>) -> String {
     path.as_ref().to_str().unwrap().to_string()
 }

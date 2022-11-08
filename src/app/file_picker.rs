@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::app::clickable_text::clickable_text_tooltip;
+use crate::app::interactable_text::interactive_text_tooltip;
 use iced::{button, tooltip, Alignment, Button, Color, Row, Text};
 use rfd::AsyncFileDialog;
 
@@ -38,10 +38,11 @@ pub fn widget<'state>(
     text: &str,
     tooltip: Option<String>,
 ) -> Row<'state, GuiAppMessage> {
-    let text = clickable_text_tooltip(
+    let text = interactive_text_tooltip(
         text,
         tooltip.map(|t| (t, tooltip::Position::Bottom, None)),
         None::<Color>,
+        (None, None, None),
     );
 
     Row::with_children(vec![

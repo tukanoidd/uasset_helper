@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::{
     collections::HashSet,
     ffi::OsString,
@@ -37,19 +38,67 @@ impl AssetError {
 
 impl std::error::Error for AssetError {}
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum AssetOrigin {
+    Project,
+    Engine,
+    ProjectPlugin,
+    EnginePlugin,
+}
+
+impl ToString for AssetOrigin {
+    fn to_string(&self) -> String {
+        match self {
+            AssetOrigin::Project => "Project",
+            AssetOrigin::Engine => "Engine",
+            AssetOrigin::ProjectPlugin => "Project Plugin",
+            AssetOrigin::EnginePlugin => "Engine Plugin",
+        }
+        .to_string()
+    }
+}
+
 #[derive(Debug)]
 pub struct Asset {
     pub package: AssetHeader<File>,
     pub path: PathBuf,
+    pub origin: AssetOrigin,
 }
 
 impl Asset {
     pub fn new(asset_path: impl AsRef<Path>) -> Result<Self, AssetError> {
+        if !asset_path.as_ref().is_file()
+            || asset_path.as_ref().extension() != Some(OsStr::new("uasset"))
+        {
+            return Err(AssetError::new(
+                asset_path.as_ref(),
+                "File does not exist or is not a .uasset file",
+            ));
+        }
+
         let package = Self::read_asset(&asset_path)?;
+
+        let plugin_path = asset_path
+            .as_ref()
+            .iter()
+            .take_while(|seg| *seg != "Plugins")
+            .collect::<PathBuf>()
+            .join("Plugins");
+        let is_plugin = plugin_path != asset_path.as_ref() && plugin_path.exists();
+
+        let (is_engine, _) = AssetDirs::is_engine_path(&asset_path);
+
+        let origin = match (is_engine, is_plugin) {
+            (true, true) => AssetOrigin::EnginePlugin,
+            (true, false) => AssetOrigin::Engine,
+            (false, true) => AssetOrigin::ProjectPlugin,
+            (false, false) => AssetOrigin::Project,
+        };
 
         Ok(Self {
             package,
             path: asset_path.as_ref().to_path_buf(),
+            origin,
         })
     }
 
@@ -212,7 +261,7 @@ impl Asset {
 #[derive(Debug)]
 pub struct AssetDirs {
     pub asset_file_path: Option<PathBuf>,
-    pub game_root: Option<PathBuf>,
+    pub game_dir: Option<PathBuf>,
     pub content_dir: Option<PathBuf>,
     pub engine_dir: Option<PathBuf>,
     pub engine_content_dir: Option<PathBuf>,
@@ -221,13 +270,13 @@ pub struct AssetDirs {
 
 impl AssetDirs {
     pub fn new(asset_file_path: Option<PathBuf>, engine_dir: Option<PathBuf>) -> Self {
-        let (game_root, content_dir) = Self::get_game_dirs(&asset_file_path);
-        let (engine_dir, engine_content_dir) = Self::get_engine_dirs(&engine_dir);
-        let plugins_dirs = Self::get_plugins_dirs(&game_root, &engine_dir);
+        let (game_dir, content_dir, engine_dir, engine_content_dir) =
+            Self::get_dirs(&asset_file_path, &engine_dir);
+        let plugins_dirs = Self::get_plugins_dirs(&game_dir, &engine_dir);
 
         Self {
             asset_file_path,
-            game_root,
+            game_dir,
             content_dir,
             engine_dir,
             engine_content_dir,
@@ -251,7 +300,7 @@ impl AssetDirs {
     }
 
     pub fn game_root_str(&self) -> Option<String> {
-        self.game_root.as_ref().map(path_to_str)
+        self.game_dir.as_ref().map(path_to_str)
     }
 
     pub fn content_dir_str(&self) -> Option<String> {
@@ -310,6 +359,67 @@ impl AssetDirs {
         (engine_dir, engine_content_dir)
     }
 
+    pub fn get_dirs(
+        asset_file_path: &Option<PathBuf>,
+        engine_path: &Option<PathBuf>,
+    ) -> (
+        Option<PathBuf>,
+        Option<PathBuf>,
+        Option<PathBuf>,
+        Option<PathBuf>,
+    ) {
+        let (game_root, content_dir, engine_dir, engine_content_dir) = match asset_file_path {
+            Some(asset_file_path_ref) => match Self::is_engine_path(asset_file_path_ref) {
+                (true, Some((engine_dir, engine_content_dir))) => {
+                    (None, None, Some(engine_dir), Some(engine_content_dir))
+                }
+                (false, None) => {
+                    let (game_root, content_dir) = Self::get_game_dirs(&asset_file_path);
+
+                    (game_root, content_dir, None, None)
+                }
+                _ => (None, None, None, None),
+            },
+            None => (None, None, None, None),
+        };
+
+        match (engine_dir, engine_content_dir) {
+            (Some(engine_dir), Some(engine_content_dir)) => (
+                game_root,
+                content_dir,
+                Some(engine_dir),
+                Some(engine_content_dir),
+            ),
+            _ => {
+                let (engine_dir, engine_content_dir) = Self::get_engine_dirs(&engine_path);
+
+                (game_root, content_dir, engine_dir, engine_content_dir)
+            }
+        }
+    }
+
+    pub fn is_engine_path(asset_file_path: impl AsRef<Path>) -> (bool, Option<(PathBuf, PathBuf)>) {
+        let engine_path: PathBuf = asset_file_path
+            .as_ref()
+            .iter()
+            .take_while(|seg| *seg != "Engine")
+            .collect::<PathBuf>()
+            .join("Engine");
+
+        let res = if engine_path == asset_file_path.as_ref() || !engine_path.exists() {
+            (false, None)
+        } else {
+            let engine_content_dir = engine_path.join("Content");
+
+            match engine_content_dir.exists() {
+                true => (true, Some((engine_path, engine_content_dir))),
+                false => (false, None),
+            }
+        };
+
+        res
+    }
+
     pub fn get_plugins_dirs(
         game_root: &Option<PathBuf>,
         engine_dir: &Option<PathBuf>,
@@ -327,13 +437,16 @@ impl AssetDirs {
         res
     }
 
-    pub fn update_game_root(&mut self, asset_file_path: Option<PathBuf>) {
+    pub fn update_asset_file(&mut self, asset_file_path: Option<PathBuf>) {
         self.asset_file_path = asset_file_path;
 
-        let (game_root, content_dir) = Self::get_game_dirs(&self.asset_file_path);
+        let (game_root, content_dir, engine_dir, engine_content_dir) =
+            Self::get_dirs(&self.asset_file_path, &self.engine_dir);
 
-        self.game_root = game_root;
+        self.game_dir = game_root;
         self.content_dir = content_dir;
+        self.engine_dir = engine_dir;
+        self.engine_content_dir = engine_content_dir;
 
         self.update_plugin_dirs();
     }
@@ -348,6 +461,6 @@ impl AssetDirs {
     }
 
     pub fn update_plugin_dirs(&mut self) {
-        self.plugins_dirs = Self::get_plugins_dirs(&self.game_root, &self.engine_dir);
+        self.plugins_dirs = Self::get_plugins_dirs(&self.game_dir, &self.engine_dir);
     }
 }

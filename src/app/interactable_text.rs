@@ -12,21 +12,30 @@ use iced_native::{
 
 use crate::app::GuiAppMessage;
 
-pub struct ClickableText<Message> {
+pub struct InteractiveText<Message> {
     text: Text,
 
     on_press: Option<Message>,
     on_shift_press: Option<Message>,
 
+    on_hover_in: Option<Message>,
+    on_shift_hover: Option<Message>,
+    on_hover_out: Option<Message>,
+
     shift_pressed: bool,
 }
 
-impl<Message> ClickableText<Message> {
+impl<Message> InteractiveText<Message> {
     pub fn new(text: Text) -> Self {
         Self {
             text,
             on_press: None,
             on_shift_press: None,
+
+            on_hover_in: None,
+            on_shift_hover: None,
+            on_hover_out: None,
+
             shift_pressed: false,
         }
     }
@@ -44,9 +53,30 @@ impl<Message> ClickableText<Message> {
             ..self
         }
     }
+
+    pub fn on_hover_in(self, message: Message) -> Self {
+        Self {
+            on_hover_in: Some(message),
+            ..self
+        }
+    }
+
+    pub fn on_shift_hover(self, message: Message) -> Self {
+        Self {
+            on_shift_hover: Some(message),
+            ..self
+        }
+    }
+
+    pub fn on_hover_out(self, message: Message) -> Self {
+        Self {
+            on_hover_out: Some(message),
+            ..self
+        }
+    }
 }
 
-impl<Message> Widget<Message, Renderer> for ClickableText<Message>
+impl<Message> Widget<Message, Renderer> for InteractiveText<Message>
 where
     Message: Clone,
 {
@@ -108,8 +138,19 @@ where
                         _ => {}
                     }
                 }
+                mouse::Event::CursorEntered => {
+                    if let Some(message) = &self.on_hover_in {
+                        shell.publish(message.clone());
+
+                        return Status::Captured;
+                    }
+                }
                 mouse::Event::CursorLeft => {
-                    self.shift_pressed = false;
+                    if let Some(on_hover_out) = &self.on_hover_out {
+                        shell.publish(on_hover_out.clone());
+
+                        return Status::Captured;
+                    }
                 }
                 _ => {}
             },
@@ -125,6 +166,25 @@ where
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 keyboard::Event::ModifiersChanged(modifiers) => {
                     self.shift_pressed = modifiers.shift();
+
+                    if is_mouse_over {
+                        match self.shift_pressed {
+                            true => {
+                                if let Some(message) = &self.on_shift_hover {
+                                    shell.publish(message.clone());
+
+                                    return Status::Captured;
+                                }
+                            }
+                            false => {
+                                if let Some(message) = &self.on_hover_in {
+                                    shell.publish(message.clone());
+
+                                    return Status::Captured;
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -151,19 +211,24 @@ where
     }
 }
 
-impl<'a, Message> From<ClickableText<Message>> for Element<'a, Message>
+impl<'a, Message> From<InteractiveText<Message>> for Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    fn from(value: ClickableText<Message>) -> Self {
+    fn from(value: InteractiveText<Message>) -> Self {
         Element::new(value)
     }
 }
 
-pub fn clickable_text_tooltip<'a>(
+pub fn interactive_text_tooltip<'a>(
     text: impl Into<String> + Clone,
     tooltip: Option<(String, tooltip::Position, Option<u16>)>,
     color: Option<impl Into<Color>>,
+    (on_hover_in, on_shift_hover, on_hover_out): (
+        Option<GuiAppMessage>,
+        Option<GuiAppMessage>,
+        Option<GuiAppMessage>,
+    ),
 ) -> Element<'a, GuiAppMessage> {
     let mut text_widget = Text::new(text.clone()).size(16).width(Length::Shrink);
 
@@ -171,8 +236,20 @@ pub fn clickable_text_tooltip<'a>(
         text_widget = text_widget.color(color);
     }
 
-    let text_widget =
-        ClickableText::new(text_widget).on_press(GuiAppMessage::SaveTextToClipboard(text.into()));
+    let mut text_widget =
+        InteractiveText::new(text_widget).on_press(GuiAppMessage::SaveTextToClipboard(text.into()));
+
+    if let Some(on_hover_in) = on_hover_in {
+        text_widget = text_widget.on_hover_in(on_hover_in);
+    }
+
+    if let Some(on_shift_hover) = on_shift_hover {
+        text_widget = text_widget.on_shift_hover(on_shift_hover);
+    }
+
+    if let Some(on_hover_out) = on_hover_out {
+        text_widget = text_widget.on_hover_out(on_hover_out);
+    }
 
     match tooltip {
         Some((tooltip, position, size)) => Tooltip::new(
