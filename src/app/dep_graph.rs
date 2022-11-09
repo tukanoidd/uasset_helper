@@ -169,6 +169,7 @@ impl ToString for DepTreePageGraphSortType {
 #[derive(Debug, Clone)]
 pub enum DepTreePageMsg {
     GenerateDependencyTree,
+    ClearDependencyTree,
     SetMaxRecurseDepth(Option<u32>),
     TabChanged(DepTreePageTab),
 
@@ -198,6 +199,7 @@ pub struct DepTreePage {
     pub min_graph_depth_text: String,
 
     pub max_recurse_depth_text_input_state: text_input::State,
+    pub clear_dep_tree_button_state: button::State,
     pub gen_dep_tree_button_state: button::State,
     pub scrollable_dep_tree_viewer_state: scrollable::State,
 
@@ -235,6 +237,7 @@ impl DepTreePage {
             min_graph_depth_text: String::from("0"),
 
             max_recurse_depth_text_input_state: Default::default(),
+            clear_dep_tree_button_state: Default::default(),
             gen_dep_tree_button_state: Default::default(),
             scrollable_dep_tree_viewer_state: Default::default(),
 
@@ -281,6 +284,9 @@ impl DepTreePage {
                     }
                 }
             }
+            DepTreePageMsg::ClearDependencyTree => {
+                self.dep_tree = None;
+            }
             DepTreePageMsg::SetMaxRecurseDepth(new_max_recurse_depth) => {
                 match new_max_recurse_depth {
                     Some(new_depth) => {
@@ -321,9 +327,11 @@ impl DepTreePage {
     pub fn view(&mut self) -> Element<DepTreePageMsg> {
         let controls = Self::controls(
             self.style,
+            self.dep_tree.is_some(),
             &self.max_recurse_depth_text,
             &mut self.max_recurse_depth_text_input_state,
             &mut self.gen_dep_tree_button_state,
+            &mut self.clear_dep_tree_button_state,
         )
         .into();
 
@@ -361,10 +369,12 @@ impl DepTreePage {
     fn controls<'a>(
         style: Theme,
 
+        dep_tree_exists: bool,
         max_recurse_depth_text: &str,
 
         max_recurse_depth_text_input_state: &'a mut text_input::State,
         gen_dep_tree_button_state: &'a mut button::State,
+        clear_dep_tree_button_state: &'a mut button::State,
     ) -> Row<'a, DepTreePageMsg> {
         let max_recurse_limit = Self::text_with_input(
             style,
@@ -381,14 +391,29 @@ impl DepTreePage {
 
         let gen_tree_button = Button::new(
             gen_dep_tree_button_state,
-            Text::new("Generate Dependency Tree").horizontal_alignment(Horizontal::Center),
+            Text::new("Generate").horizontal_alignment(Horizontal::Center),
         )
         .style(style)
-        .width(Length::Units(200))
+        .width(Length::Units(150))
         .on_press(DepTreePageMsg::GenerateDependencyTree)
         .into();
 
-        Row::with_children(vec![max_recurse_limit, gen_tree_button])
+        let mut widgets = vec![max_recurse_limit, gen_tree_button];
+
+        if dep_tree_exists {
+            let clear_tree_button = Button::new(
+                clear_dep_tree_button_state,
+                Text::new("Clear").horizontal_alignment(Horizontal::Center),
+            )
+            .style(style)
+            .width(Length::Units(150))
+            .on_press(DepTreePageMsg::ClearDependencyTree)
+            .into();
+
+            widgets.push(clear_tree_button);
+        }
+
+        Row::with_children(widgets)
             .spacing(20)
             .align_items(Alignment::Center)
     }
@@ -771,7 +796,9 @@ impl DepTreePage {
                 [0.2, 0.8, 0.2]
             }),
             (
-                Some(DepTreePageMsg::SaveToClipboard(name.clone().unwrap_or(text.clone()))),
+                Some(DepTreePageMsg::SaveToClipboard(
+                    name.clone().unwrap_or(text.clone()),
+                )),
                 Some(DepTreePageMsg::SaveToClipboard(asset.path_str().clone())),
                 name.map(|file_name_str| {
                     DepTreePageMsg::SaveToClipboard(
