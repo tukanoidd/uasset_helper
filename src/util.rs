@@ -33,6 +33,25 @@ impl<L, R> SplitVecContainer<L, R> {
     }
 }
 
+impl<I, T, E> From<I> for SplitVecContainer<T, E>
+where
+    I: IntoIterator<Item = Result<T, E>>,
+{
+    fn from(value: I) -> Self {
+        value.into_iter().fold(
+            SplitVecContainer::default(),
+            |mut split_vec_container, val| {
+                match val {
+                    Ok(val) => split_vec_container.push_left(val),
+                    Err(err) => split_vec_container.push_right(err),
+                };
+
+                split_vec_container
+            },
+        )
+    }
+}
+
 impl<L, R> From<SplitVecContainer<L, R>> for (Vec<L>, Vec<R>) {
     fn from(container: SplitVecContainer<L, R>) -> Self {
         (container.left, container.right)

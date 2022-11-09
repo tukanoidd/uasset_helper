@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "cargo",
+            "name": "Build UAsset Helper",
+            "cargoArgs": ["build"],
+        },
+
+    ]
+}

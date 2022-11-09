@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use iced::{button, tooltip, Alignment, Button, Color, Row, Text};
+use iced::{button, container, tooltip, Alignment, Button, Color, Row, Text};
 use rfd::AsyncFileDialog;
 
 use crate::app::interactable_text::interactive_text_tooltip;
@@ -37,11 +37,13 @@ pub fn widget<'a, Message>(
     tooltip: Option<String>,
     (text_on_press, text_on_shift_press): (Option<Message>, Option<Message>),
     button_on_press: Message,
+    button_style: Option<impl Into<Box<dyn button::StyleSheet + 'a>>>,
+    tooltip_style: Option<impl Into<Box<dyn container::StyleSheet + 'a>>>,
 ) -> Row<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let tooltip = tooltip.map(|t| (t, tooltip::Position::Bottom, None));
+    let tooltip = tooltip.map(|t| (t, tooltip::Position::Bottom, None, tooltip_style));
 
     let text = interactive_text_tooltip(
         text,
@@ -51,12 +53,13 @@ where
         (None, None, None),
     );
 
-    Row::with_children(vec![
-        Button::new(state, Text::new(button_text))
-            .on_press(button_on_press)
-            .into(),
-        text,
-    ])
-    .align_items(Alignment::Center)
-    .spacing(10)
+    let mut button = Button::new(state, Text::new(button_text)).on_press(button_on_press);
+
+    if let Some(button_style) = button_style {
+        button = button.style(button_style);
+    };
+
+    Row::with_children(vec![button.into(), text])
+        .align_items(Alignment::Center)
+        .spacing(10)
 }

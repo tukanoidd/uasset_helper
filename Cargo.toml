@@ -27,6 +27,7 @@ iced_native = "0.5.1"
 iced_aw = { version = "0.2.0", features = ["icons"] }
 graphviz-rust = "0.3.0"
 rfd = "0.10.0"
+git2 = "0.15"
 
 arboard = { version = "3.2.0", features = ["wayland-data-control"] }
 indicatif = "0.17.1"

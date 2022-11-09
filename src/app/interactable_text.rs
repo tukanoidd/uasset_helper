@@ -1,5 +1,5 @@
 use iced::{
-    keyboard,
+    container, keyboard,
     mouse::{self, Interaction},
     tooltip, Color, Element, Length, Point, Rectangle, Renderer, Text, Tooltip,
 };
@@ -15,12 +15,15 @@ pub struct InteractiveText<Message> {
 
     on_press: Option<Message>,
     on_shift_press: Option<Message>,
+    on_ctrl_press: Option<Message>,
 
     on_hover_in: Option<Message>,
     on_shift_hover: Option<Message>,
+    on_ctrl_hover: Option<Message>,
     on_hover_out: Option<Message>,
 
     shift_pressed: bool,
+    ctrl_pressed: bool,
 }
 
 impl<Message> InteractiveText<Message> {
@@ -29,12 +32,15 @@ impl<Message> InteractiveText<Message> {
             text,
             on_press: None,
             on_shift_press: None,
+            on_ctrl_press: None,
 
             on_hover_in: None,
             on_shift_hover: None,
+            on_ctrl_hover: None,
             on_hover_out: None,
 
             shift_pressed: false,
+            ctrl_pressed: false,
         }
     }
 
@@ -48,6 +54,13 @@ impl<Message> InteractiveText<Message> {
     pub fn on_shift_press(self, message: Message) -> Self {
         Self {
             on_shift_press: Some(message),
+            ..self
+        }
+    }
+
+    pub fn on_ctrl_press(self, message: Message) -> Self {
+        Self {
+            on_ctrl_press: Some(message),
             ..self
         }
     }
@@ -122,13 +135,24 @@ where
         match event {
             Event::Mouse(mouse_event) => match mouse_event {
                 mouse::Event::ButtonPressed(mouse::Button::Left) if is_mouse_over => {
-                    match (self.shift_pressed, &self.on_press, &self.on_shift_press) {
-                        (true, _, Some(message)) => {
+                    match (
+                        self.shift_pressed,
+                        self.ctrl_pressed,
+                        &self.on_press,
+                        &self.on_shift_press,
+                        &self.on_ctrl_press,
+                    ) {
+                        (true, _, _, Some(message), _) => {
                             shell.publish(message.clone());
 
                             return Status::Captured;
                         }
-                        (false, Some(message), _) => {
+                        (false, true, _, _, Some(message)) => {
+                            shell.publish(message.clone());
+
+                            return Status::Captured;
+                        }
+                        (false, _, Some(message), _, _) => {
                             shell.publish(message.clone());
 
                             return Status::Captured;
@@ -164,17 +188,25 @@ where
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 keyboard::Event::ModifiersChanged(modifiers) => {
                     self.shift_pressed = modifiers.shift();
+                    self.ctrl_pressed = modifiers.control();
 
                     if is_mouse_over {
-                        match self.shift_pressed {
-                            true => {
+                        match (self.shift_pressed, self.ctrl_pressed) {
+                            (true, _) => {
                                 if let Some(message) = &self.on_shift_hover {
                                     shell.publish(message.clone());
 
                                     return Status::Captured;
                                 }
                             }
-                            false => {
+                            (false, true) => {
+                                if let Some(message) = &self.on_ctrl_hover {
+                                    shell.publish(message.clone());
+
+                                    return Status::Captured;
+                                }
+                            }
+                            (false, false) => {
                                 if let Some(message) = &self.on_hover_in {
                                     shell.publish(message.clone());
 
@@ -218,9 +250,9 @@ where
     }
 }
 
-pub fn interactive_text_tooltip<'a, Message>(
+pub fn interactive_text_tooltip<'a, Message, Theme>(
     text: impl Into<String> + Clone,
-    tooltip: Option<(String, tooltip::Position, Option<u16>)>,
+    tooltip: Option<(String, tooltip::Position, Option<u16>, Option<Theme>)>,
     color: Option<impl Into<Color>>,
     (on_press, on_shift_press): (Option<Message>, Option<Message>),
     (on_hover_in, on_shift_hover, on_hover_out): (
@@ -231,6 +263,7 @@ pub fn interactive_text_tooltip<'a, Message>(
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
+    Theme: Into<Box<dyn container::StyleSheet + 'a>>,
 {
     let mut text_widget = Text::new(text.clone()).size(16).width(Length::Shrink);
 
@@ -261,9 +294,15 @@ where
     }
 
     match tooltip {
-        Some((tooltip, position, size)) => Tooltip::new(text_widget, tooltip, position)
-            .size(size.unwrap_or(16))
-            .into(),
+        Some((tooltip, position, size, style)) => {
+            let mut tooltip = Tooltip::new(text_widget, tooltip, position).size(size.unwrap_or(16));
+
+            if let Some(style) = style {
+                tooltip = tooltip.style(style);
+            }
+
+            tooltip.into()
+        }
         None => text_widget.into(),
     }
 }

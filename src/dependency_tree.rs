@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::Path, rc::Rc, sync::atomic::AtomicU64};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    rc::Rc,
+    sync::atomic::AtomicU64,
+};
 
 use itertools::Itertools;
 
@@ -15,12 +20,19 @@ fn new_id() -> NodeID {
     NODE_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Acquire)
 }
 
+fn reset_id() {
+    NODE_ID_COUNTER.store(0, std::sync::atomic::Ordering::SeqCst)
+}
+
 #[allow(dead_code)]
 pub struct DepTree {
     pub root_node_id: NodeID,
     pub nodes: HashMap<NodeID, Rc<Asset>>,
     pub node_connections: HashMap<NodeID, Vec<NodeID>>,
     pub failures: Vec<AssetError>,
+
+    pub max_recurse_depth: u32,
+    pub recurse_depths: HashMap<NodeID, u32>,
 }
 
 impl DepTree {
@@ -29,6 +41,8 @@ impl DepTree {
         max_recurse_depth: u32,
         pb: Option<&mut ProgressBar>,
     ) -> Result<Self, AssetError> {
+        reset_id();
+
         log::debug!(
             "Building the dependency tree of \"{:?}\"...",
             asset_dirs.asset_file_path.as_ref()
@@ -36,9 +50,8 @@ impl DepTree {
 
         let mut nodes = HashMap::new();
         let mut node_connections: HashMap<NodeID, Vec<NodeID>> = HashMap::new();
-        let mut known_paths = Vec::new();
-        let mut known_failed_paths = Vec::new();
-        let mut failures = Vec::new();
+        let mut known_paths = HashSet::new();
+        let mut failures = HashSet::new();
 
         let root_node = Asset::new(asset_dirs.asset_file_path.as_ref().unwrap()).map(Rc::new)?;
 
@@ -47,48 +60,59 @@ impl DepTree {
         let root_node_id = new_id();
         nodes.insert(root_node_id, root_node);
 
+        // Tracking the depth of the "recursion" of the dependecy chain
+        let mut recurse_depths = HashMap::new();
+        // We put the original (root) node into the map
+        recurse_depths.insert(root_node_id, 0);
+
         if max_recurse_depth > 0 {
             if let Some(pb) = &pb {
                 pb.set_message(format!("Building the network of dependencies recursively with maximum recurse depth of {max_recurse_depth} ..."));
             }
 
+            // List we use to be able to dynamically resolve incoming nodes
             let mut unresolved_nodes_ids = vec![root_node_id];
 
-            let mut recurse_depths = HashMap::new();
-            recurse_depths.insert(root_node_id, 0);
-
+            // We do iterations as long as there are unresolved ids
             while let Some(cur_node_id) = unresolved_nodes_ids.pop() {
                 if let Some(pb) = &pb {
                     pb.set_message(format!("Resolving node with ID {cur_node_id}"));
                 }
 
-                if recurse_depths.get(&cur_node_id).unwrap() >= &max_recurse_depth {
-                    log::warn!("Reached the maximum recurse depth of {max_recurse_depth} for node with ID {cur_node_id}! Skipping...");
-
+                // We don't need to resolve current node's dependencies if it is at the maximum depth level
+                if *recurse_depths.get(&cur_node_id).unwrap() >= max_recurse_depth {
                     continue;
                 }
 
+                // Get the current node
                 let cur_node = nodes.get(&cur_node_id).cloned().unwrap();
+                // Get current node assets path
                 let asset_path = &cur_node.path;
 
                 if let Some(pb) = &pb {
                     pb.set_message(format!("Getting the dependency paths of node with ID {cur_node_id} ({asset_path:?}) ..."));
                 }
 
-                let (dep_paths, mut fails) = cur_node.get_dependency_asset_paths(
+                // Get current nodes dependencies
+                let (dep_paths, fails) = cur_node.get_dependency_asset_paths(
                     asset_dirs.content_dir.as_ref().unwrap(),
                     &asset_dirs.engine_content_dir,
                     &asset_dirs.plugins_dirs,
                 );
 
-                fails.retain(|fail| !known_failed_paths.contains(&fail.path));
-                known_failed_paths.extend(fails.iter().map(|fail| fail.path.clone()));
-                failures.extend(fails);
-
+                // Find all the assets dependency paths that we haven't checked out yet
                 let unresolved_deps = dep_paths
-                    .iter()
-                    .filter(|&dep_path| !known_paths.contains(dep_path))
+                    .into_iter()
+                    .filter(|dep_path| {
+                        !known_paths.contains(dep_path)
+                            && !failures
+                                .iter()
+                                .any(|fail: &AssetError| &fail.path == dep_path)
+                    })
                     .collect::<Vec<_>>();
+
+                // Add new fails to the final list
+                failures.extend(fails);
 
                 if let Some(pb) = &pb {
                     pb.set_message(format!(
@@ -97,40 +121,31 @@ impl DepTree {
                     ));
                 }
 
-                let (unresolved_nodes, mut fails): (Vec<Rc<Asset>>, Vec<AssetError>) =
-                    unresolved_deps
-                        .into_iter()
-                        .map(|dep_path| Asset::new(dep_path).map(Rc::new))
-                        .fold(
-                            SplitVecContainer::default(),
-                            |mut success_failure, asset| {
-                                match asset {
-                                    Ok(asset) => {
-                                        success_failure.push_left(asset);
-                                    }
-                                    Err(err) => {
-                                        success_failure.push_right(err);
-                                    }
-                                };
-
-                                success_failure
-                            },
-                        )
-                        .into();
+                // Try to create nodes from the dependencies and split the list in 2, for successes and failures
+                let (unresolved_nodes, fails): (Vec<Rc<Asset>>, Vec<AssetError>) =
+                    Into::<SplitVecContainer<Rc<Asset>, AssetError>>::into(
+                        unresolved_deps
+                            .into_iter()
+                            // Create an Asset from the dependency path and wrap it in a ref-counted pointer, so we don't waste memory cloning it
+                            .map(|dep_path| Asset::new(dep_path).map(Rc::new))
+                            // Collect it back to vector
+                            .collect::<Vec<_>>(),
+                    )
+                    .into();
 
                 if let Some(pb) = &pb {
                     pb.set_message("Saving all the failures...");
                 }
 
-                fails.retain(|fail| !known_failed_paths.contains(&fail.path));
-                known_failed_paths.extend(fails.iter().map(|fail| fail.path.clone()));
+                // Add new fails to the final list
                 failures.extend(fails);
 
                 if let Some(pb) = &pb {
                     pb.set_message("Caching new known paths...");
                 }
 
-                known_paths.extend(unresolved_nodes.iter().map(|asset| asset.path.clone()));
+                // Add new known paths
+                known_paths.extend(unresolved_nodes.iter().map(|node| node.path.clone()));
 
                 if let Some(pb) = &pb {
                     pb.set_message("Saving the unresolved nodes...");
@@ -159,7 +174,10 @@ impl DepTree {
             root_node_id,
             nodes,
             node_connections,
-            failures,
+            failures: failures.into_iter().collect(),
+
+            max_recurse_depth,
+            recurse_depths,
         })
     }
 
@@ -199,6 +217,10 @@ impl DepTree {
     #[allow(dead_code)]
     pub fn get_node_connections(&self, id: NodeID) -> Vec<NodeID> {
         self.node_connections.get(&id).cloned().unwrap_or_default()
+    }
+    
+    pub fn get_recurse_depth(&self, id: NodeID) -> Option<u32> {
+        self.recurse_depths.get(&id).copied()
     }
 
     pub fn print_node_paths(&self) {

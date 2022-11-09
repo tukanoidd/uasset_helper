@@ -1,6 +1,7 @@
 mod dep_graph;
 mod file_picker;
 mod interactable_text;
+mod styling;
 
 use std::path::PathBuf;
 
@@ -15,6 +16,8 @@ use crate::{
     asset::AssetDirs,
     util::save_to_clipboard,
 };
+
+use self::styling::Theme;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AppTab {
@@ -60,6 +63,7 @@ pub struct GuiApp {
     asset_dirs: AssetDirs,
 
     // State
+    style: Theme,
     current_tab: AppTab,
 
     // Header
@@ -83,9 +87,10 @@ impl Application for GuiApp {
                 clipboard: arboard::Clipboard::new().unwrap(),
 
                 // Cache
-                asset_dirs,
+                asset_dirs: asset_dirs.clone(),
 
                 // State
+                style: Theme::Dark,
                 current_tab: AppTab::DependencyTree,
 
                 // Header
@@ -94,7 +99,7 @@ impl Application for GuiApp {
                 engine_folder_picker_button_state: Default::default(),
 
                 // Body
-                dep_tree_page: Default::default(),
+                dep_tree_page: DepTreePage::new(Theme::Dark, asset_dirs),
             },
             Command::none(),
         )
@@ -139,6 +144,7 @@ impl Application for GuiApp {
     fn view(&mut self) -> Element<'_, Self::Message> {
         let header = Self::header(
             &self.asset_dirs,
+            self.style,
             self.current_tab,
             &mut self.pick_list_tabs_state,
             &mut self.asset_file_picker_button_state,
@@ -146,7 +152,9 @@ impl Application for GuiApp {
         );
 
         let body = match self.current_tab {
-            AppTab::AssetInfo => Container::new(Text::new("Asset Info")).into(),
+            AppTab::AssetInfo => Container::new(Text::new("Asset Info"))
+                .style(self.style)
+                .into(),
             AppTab::DependencyTree => self.dep_tree_page.view().map(GuiAppMessage::DepTreePage),
         };
 
@@ -155,6 +163,7 @@ impl Application for GuiApp {
                 .spacing(20)
                 .align_items(Alignment::Center),
         )
+        .style(self.style)
         .padding(20)
         .into()
     }
@@ -163,6 +172,8 @@ impl Application for GuiApp {
 impl GuiApp {
     fn header<'a>(
         asset_dirs: &AssetDirs,
+
+        style: Theme,
         current_tab: AppTab,
 
         pick_list_tabs_state: &'a mut pick_list::State<AppTab>,
@@ -175,6 +186,7 @@ impl GuiApp {
             Some(current_tab),
             GuiAppMessage::TabChanged,
         )
+        .style(style)
         .width(Length::FillPortion(2))
         .into();
 
@@ -193,6 +205,8 @@ impl GuiApp {
                 asset_file_picker_tooltip.map(GuiAppMessage::SaveTextToClipboard),
             ),
             GuiAppMessage::OpenFilePicker(true),
+            Some(style),
+            Some(style),
         )
         .width(Length::FillPortion(3))
         .into();
@@ -211,6 +225,8 @@ impl GuiApp {
                 None,
             ),
             GuiAppMessage::OpenFilePicker(true),
+            Some(style),
+            Some(style),
         )
         .width(Length::FillPortion(3))
         .into();

@@ -2,23 +2,23 @@ use std::rc::Rc;
 
 use enum_iterator::{all, Sequence};
 use iced::{
-    alignment::Horizontal, button, pick_list, scrollable, text_input, Alignment, Button, Checkbox,
-    Column, Container, Element, Length, PickList, Row, Scrollable, Text, TextInput,
+    alignment::{Horizontal, Vertical},
+    button, pick_list, scrollable, text_input, Alignment, Button, Checkbox, Column, Container,
+    Element, Length, PickList, Row, Scrollable, Text, TextInput,
 };
 use iced_aw::{graphics::IconText, Icon, TabBar, TabLabel};
-use iced_native::widget::Space;
-use iced_native::Command;
+use iced_native::{widget::Space, Command};
 use itertools::Itertools;
 use num_traits::{FromPrimitive, ToPrimitive};
-use smart_default::SmartDefault;
 
-use crate::asset::AssetDirs;
 use crate::{
     app::interactable_text::interactive_text_tooltip,
-    asset::{Asset, AssetOrigin},
+    asset::{Asset, AssetDirs, AssetOrigin},
     dependency_tree::{DepTree, NodeID},
     util::{path_to_str, save_to_clipboard, SortOrder},
 };
+
+use super::styling::Theme;
 
 #[repr(usize)]
 #[derive(Debug, Copy, Clone, PartialEq, Sequence)]
@@ -169,8 +169,10 @@ impl ToString for DepTreePageGraphSortType {
 #[derive(Debug, Clone)]
 pub enum DepTreePageMsg {
     GenerateDependencyTree,
-    SetMaxRecurseDepth(u32),
+    SetMaxRecurseDepth(Option<u32>),
     TabChanged(DepTreePageTab),
+
+    SetMinGraphDepth(Option<u32>),
 
     FilterChanged(usize, bool),
     SortChanged(DepTreePageGraphSortType),
@@ -181,38 +183,35 @@ pub enum DepTreePageMsg {
     SaveToClipboard(String),
 }
 
-#[derive(SmartDefault)]
 pub struct DepTreePage {
+    pub style: Theme,
+    pub asset_dirs: AssetDirs,
+
     pub dep_tree: Option<DepTree>,
 
-    #[default(DepTreePageTab::Graph)]
     pub tab: DepTreePageTab,
 
-    #[default(10)]
     pub max_recurse_depth: u32,
+    pub max_recurse_depth_text: String,
+
+    pub min_graph_depth: u32,
+    pub min_graph_depth_text: String,
 
     pub max_recurse_depth_text_input_state: text_input::State,
     pub gen_dep_tree_button_state: button::State,
     pub scrollable_dep_tree_viewer_state: scrollable::State,
 
+    pub min_graph_depth_text_input_state: text_input::State,
     pub sort_pick_list_state: pick_list::State<DepTreePageGraphSortType>,
     pub sort_order_button_state: button::State,
 
     pub graph_footer_scrollable_state: scrollable::State,
 
     /// Filters for the graph
-    #[default(vec![
-    (AssetOrigin::Engine, true),
-    (AssetOrigin::Project, true),
-    (AssetOrigin::EnginePlugin, true),
-    (AssetOrigin::ProjectPlugin, true)
-    ])]
     pub filters: Vec<(AssetOrigin, bool)>,
     /// Sorting type of the graph
-    #[default(DepTreePageGraphSortType::Id)]
     pub graph_sort_type: DepTreePageGraphSortType,
     /// Sorting order of the graph
-    #[default(SortOrder::Ascending)]
     pub graph_sort_order: SortOrder,
 
     /// ID and if info is extended
@@ -220,6 +219,46 @@ pub struct DepTreePage {
 }
 
 impl DepTreePage {
+    pub fn new(style: Theme, asset_dirs: AssetDirs) -> Self {
+        Self {
+            style,
+            asset_dirs,
+
+            dep_tree: None,
+
+            tab: DepTreePageTab::Graph,
+
+            max_recurse_depth: 10,
+            max_recurse_depth_text: String::from("10"),
+
+            min_graph_depth: 0,
+            min_graph_depth_text: String::from("0"),
+
+            max_recurse_depth_text_input_state: Default::default(),
+            gen_dep_tree_button_state: Default::default(),
+            scrollable_dep_tree_viewer_state: Default::default(),
+
+            min_graph_depth_text_input_state: Default::default(),
+            sort_pick_list_state: Default::default(),
+            sort_order_button_state: Default::default(),
+
+            graph_footer_scrollable_state: Default::default(),
+
+            filters: vec![
+                (AssetOrigin::Engine, true),
+                (AssetOrigin::Project, true),
+                (AssetOrigin::EnginePlugin, true),
+                (AssetOrigin::ProjectPlugin, true),
+            ],
+
+            graph_sort_type: DepTreePageGraphSortType::Id,
+
+            graph_sort_order: SortOrder::Ascending,
+
+            footer_asset_show_min_info: None,
+        }
+    }
+
     pub fn update<'a, Message>(
         &mut self,
         message: DepTreePageMsg,
@@ -243,12 +282,17 @@ impl DepTreePage {
                 }
             }
             DepTreePageMsg::SetMaxRecurseDepth(new_max_recurse_depth) => {
-                self.max_recurse_depth = new_max_recurse_depth;
+                match new_max_recurse_depth {
+                    Some(new_depth) => {
+                        self.max_recurse_depth = new_depth;
+                        self.max_recurse_depth_text = new_depth.to_string();
+                    }
+                    None => self.max_recurse_depth_text = String::new(),
+                }
             }
             DepTreePageMsg::TabChanged(new_tab) => {
                 self.tab = new_tab;
             }
-
             DepTreePageMsg::FilterChanged(index, new_checked) => {
                 self.filters[index].1 = new_checked;
             }
@@ -262,6 +306,13 @@ impl DepTreePage {
                 self.footer_asset_show_min_info = new_show;
             }
             DepTreePageMsg::SaveToClipboard(text) => save_to_clipboard(clipboard, text),
+            DepTreePageMsg::SetMinGraphDepth(new_min_graph_depth) => match new_min_graph_depth {
+                Some(new_depth) => {
+                    self.min_graph_depth = new_depth;
+                    self.min_graph_depth_text = new_depth.to_string();
+                }
+                None => self.min_graph_depth_text = String::new(),
+            },
         }
 
         Command::none()
@@ -269,19 +320,25 @@ impl DepTreePage {
 
     pub fn view(&mut self) -> Element<DepTreePageMsg> {
         let controls = Self::controls(
-            self.max_recurse_depth,
+            self.style,
+            &self.max_recurse_depth_text,
             &mut self.max_recurse_depth_text_input_state,
             &mut self.gen_dep_tree_button_state,
         )
         .into();
 
         let (tab_bar, tab_body, footer) = Self::tabs(
+            self.style,
+            &self.asset_dirs,
             &self.dep_tree,
             self.tab,
+            self.min_graph_depth,
+            &self.min_graph_depth_text,
             &self.filters,
             self.graph_sort_type,
             self.graph_sort_order,
             self.footer_asset_show_min_info,
+            &mut self.min_graph_depth_text_input_state,
             &mut self.scrollable_dep_tree_viewer_state,
             &mut self.sort_pick_list_state,
             &mut self.sort_order_button_state,
@@ -302,31 +359,23 @@ impl DepTreePage {
     }
 
     fn controls<'a>(
-        max_recurse_depth: u32,
+        style: Theme,
+
+        max_recurse_depth_text: &str,
 
         max_recurse_depth_text_input_state: &'a mut text_input::State,
         gen_dep_tree_button_state: &'a mut button::State,
     ) -> Row<'a, DepTreePageMsg> {
-        let max_recurse_limit = Container::new(
-            Row::with_children(Vec::<Element<'a, DepTreePageMsg>>::from([
-                Text::new("Max Recursion Depth: ").into(),
-                TextInput::new(
-                    max_recurse_depth_text_input_state,
-                    "Type here...",
-                    &max_recurse_depth.to_string(),
-                    move |new_number| {
-                        DepTreePageMsg::SetMaxRecurseDepth(
-                            new_number.parse().unwrap_or(max_recurse_depth),
-                        )
-                    },
-                )
-                .width(Length::Units(30))
-                .size(20)
-                .padding([5, 10])
-                .into(),
-            ]))
-            .spacing(10)
-            .align_items(Alignment::End),
+        let max_recurse_limit = Self::text_with_input(
+            style,
+            "Max Recursion Depth: ",
+            max_recurse_depth_text,
+            max_recurse_depth_text_input_state,
+            move |new_number| {
+                DepTreePageMsg::SetMaxRecurseDepth({
+                    Self::only_numeric_chars(&new_number).parse().ok()
+                })
+            },
         )
         .into();
 
@@ -334,6 +383,7 @@ impl DepTreePage {
             gen_dep_tree_button_state,
             Text::new("Generate Dependency Tree").horizontal_alignment(Horizontal::Center),
         )
+        .style(style)
         .width(Length::Units(200))
         .on_press(DepTreePageMsg::GenerateDependencyTree)
         .into();
@@ -343,10 +393,52 @@ impl DepTreePage {
             .align_items(Alignment::Center)
     }
 
+    fn text_with_input<'a>(
+        style: Theme,
+
+        text: &str,
+        value: &str,
+        text_input_state: &'a mut text_input::State,
+        on_input: impl Fn(String) -> DepTreePageMsg + 'a,
+    ) -> Container<'a, DepTreePageMsg> {
+        let container = Container::new({
+            Row::with_children(Vec::<Element<'a, DepTreePageMsg>>::from([
+                Text::new(text)
+                    .vertical_alignment(Vertical::Center)
+                    .horizontal_alignment(Horizontal::Right)
+                    .into(),
+                TextInput::new(text_input_state, "Type here...", value, on_input)
+                    .style(style)
+                    .width(Length::Units(30))
+                    .size(15)
+                    .padding([5, 10])
+                    .into(),
+            ]))
+            .spacing(5)
+            .align_items(Alignment::Center)
+        })
+        .style(style)
+        .align_y(Vertical::Center);
+
+        container
+    }
+
+    fn only_numeric_chars(str: &str) -> String {
+        str.chars()
+            .filter(|char| char.is_numeric())
+            .collect::<String>()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn tabs<'a>(
+        style: Theme,
+        asset_dirs: &AssetDirs,
+
         dep_tree: &'a Option<DepTree>,
         tab: DepTreePageTab,
+
+        min_graph_depth: u32,
+        min_graph_depth_text: &str,
 
         filters: &'a [(AssetOrigin, bool)],
         graph_sort_type: DepTreePageGraphSortType,
@@ -354,14 +446,15 @@ impl DepTreePage {
 
         footer_asset_show_min_info: Option<(NodeID, bool)>,
 
+        min_graph_depth_text_input_state: &'a mut text_input::State,
         scrollable_dep_tree_viewer_state: &'a mut scrollable::State,
         sort_pick_list_state: &'a mut pick_list::State<DepTreePageGraphSortType>,
         sort_order_button_state: &'a mut button::State,
         graph_footer_scrollable_state: &'a mut scrollable::State,
     ) -> (
         Element<'a, DepTreePageMsg>,
-        Scrollable<'a, DepTreePageMsg>,
-        Option<Scrollable<'a, DepTreePageMsg>>,
+        Element<'a, DepTreePageMsg>,
+        Option<Element<'a, DepTreePageMsg>>,
     ) {
         let tab_bar = Container::new(
             TabBar::width_tab_labels(
@@ -374,6 +467,7 @@ impl DepTreePage {
             .spacing(20)
             .tab_width(Length::Units(300)),
         )
+        .style(style)
         .align_x(Horizontal::Center)
         .into();
 
@@ -386,21 +480,37 @@ impl DepTreePage {
 
             match dep_tree {
                 Some(dep_tree) => match tab {
-                    DepTreePageTab::Graph => Self::graph_tab(
-                        viewer,
-                        dep_tree,
-                        filters,
-                        graph_sort_type,
-                        graph_sort_order,
-                        footer_asset_show_min_info,
-                        sort_pick_list_state,
-                        sort_order_button_state,
-                        graph_footer_scrollable_state,
-                    ),
+                    DepTreePageTab::Graph => {
+                        let (min_depth_filters_sort, graph, graph_infp) = Self::graph_tab(
+                            style,
+                            asset_dirs,
+                            viewer,
+                            dep_tree,
+                            min_graph_depth,
+                            min_graph_depth_text,
+                            filters,
+                            graph_sort_type,
+                            graph_sort_order,
+                            footer_asset_show_min_info,
+                            min_graph_depth_text_input_state,
+                            sort_pick_list_state,
+                            sort_order_button_state,
+                            graph_footer_scrollable_state,
+                        );
+
+                        let body =
+                            Column::with_children(Vec::from([min_depth_filters_sort, graph]))
+                                .align_items(Alignment::Center)
+                                .into();
+
+                        (body, graph_infp)
+                    }
                     DepTreePageTab::Failures => Self::failures_tab(viewer, dep_tree),
                 },
                 None => (
-                    viewer.push(Text::new("No dependency tree generated yet.")),
+                    viewer
+                        .push(Text::new("No dependency tree generated yet."))
+                        .into(),
                     None,
                 ),
             }
@@ -411,8 +521,13 @@ impl DepTreePage {
 
     #[allow(clippy::too_many_arguments)]
     fn graph_tab<'a>(
+        style: Theme,
+        asset_dirs: &AssetDirs,
+
         viewer: Scrollable<'a, DepTreePageMsg>,
         dep_tree: &'a DepTree,
+        min_graph_depth: u32,
+        min_graph_depth_text: &str,
 
         filters: &'a [(AssetOrigin, bool)],
         graph_sort_type: DepTreePageGraphSortType,
@@ -420,29 +535,51 @@ impl DepTreePage {
 
         footer_asset_show_min_info: Option<(NodeID, bool)>,
 
+        min_graph_depth_text_input_state: &'a mut text_input::State,
         sort_pick_list_state: &'a mut pick_list::State<DepTreePageGraphSortType>,
         sort_order_button_state: &'a mut button::State,
         graph_footer_scrollable_state: &'a mut scrollable::State,
     ) -> (
-        Scrollable<'a, DepTreePageMsg>,
-        Option<Scrollable<'a, DepTreePageMsg>>,
+        Element<'a, DepTreePageMsg>,
+        Element<'a, DepTreePageMsg>,
+        Option<Element<'a, DepTreePageMsg>>,
     ) {
-        let filters_row = Row::with_children(
-            filters
-                .iter()
-                .enumerate()
-                .map(|(index, (filter, on))| {
-                    Checkbox::new(*on, filter.to_string(), move |new_checked| {
-                        DepTreePageMsg::FilterChanged(index, new_checked)
-                    })
-                    .into()
-                })
-                .collect(),
-        )
-        .spacing(20);
+        let min_depth_filters_sort = Row::new()
+            .spacing(15)
+            .align_items(Alignment::Center)
+            .push(Self::text_with_input(
+                style,
+                "Min Graph Depth: ",
+                min_graph_depth_text,
+                min_graph_depth_text_input_state,
+                move |new_number| {
+                    DepTreePageMsg::SetMinGraphDepth(
+                        Self::only_numeric_chars(&new_number)
+                            .parse()
+                            .ok()
+                            .map(|num: u32| num.clamp(0, dep_tree.max_recurse_depth)),
+                    )
+                },
+            ))
+            .push(Space::with_width(Length::Units(5)));
 
-        let filters_sort = filters_row
-            .push(Space::with_width(Length::Units(15)))
+        let min_depth_filters_sort = filters
+            .iter()
+            .enumerate()
+            .fold(
+                min_depth_filters_sort,
+                |min_depth_filters_sort, (index, (filter, on))| {
+                    min_depth_filters_sort
+                        .push(
+                            Checkbox::new(*on, filter.to_string(), move |new_checked| {
+                                DepTreePageMsg::FilterChanged(index, new_checked)
+                            })
+                            .style(style),
+                        )
+                        .spacing(5)
+                },
+            )
+            .push(Space::with_width(Length::Units(5)))
             .push(
                 PickList::new(
                     sort_pick_list_state,
@@ -450,6 +587,7 @@ impl DepTreePage {
                     Some(graph_sort_type),
                     DepTreePageMsg::SortChanged,
                 )
+                .style(style)
                 .width(Length::Shrink)
                 .padding([5, 10])
                 .text_size(16),
@@ -462,16 +600,19 @@ impl DepTreePage {
                         SortOrder::Descending => IconText::new(Icon::SortUpAlt),
                     },
                 )
+                .style(style)
                 .on_press(DepTreePageMsg::SortOrderToggle),
-            );
+            )
+            .into();
 
-        let viewer = viewer.push(filters_sort);
-
-        let graph = dep_tree
+        let nodes = dep_tree
             .nodes
             .iter()
+            .filter(|(&node_id, _)| {
+                dep_tree.get_recurse_depth(node_id).unwrap_or_default() >= min_graph_depth
+            })
             .filter(|(_, asset)| filters.contains(&(asset.origin, true)))
-            .map(|(id, asset)| (id, asset, dep_tree.get_node_connections(*id)))
+            .map(|(&id, asset)| (id, asset, dep_tree.get_node_connections(id)))
             .sorted_by(|(id1, asset1, cons1), (id2, asset2, cons2)| {
                 let ordering = match graph_sort_type {
                     DepTreePageGraphSortType::Id => id1.cmp(id2),
@@ -487,8 +628,25 @@ impl DepTreePage {
                     SortOrder::Descending => ordering.reverse(),
                 }
             })
-            .fold(viewer, |viewer, (node_id, asset, node_connections)| {
-                let viewer = viewer.push(Self::asset_name_text(false, *node_id, asset.clone()));
+            .collect_vec();
+
+        let nodes_count = nodes.len();
+
+        let graph = nodes.into_iter().fold(
+            viewer
+                .push(Space::with_height(Length::Units(10)))
+                .push(
+                    Text::new(format!("Nodes: {}", nodes_count))
+                        .horizontal_alignment(Horizontal::Center),
+                )
+                .push(Space::with_height(Length::Units(10))),
+            |viewer, (node_id, asset, node_connections)| {
+                let viewer = viewer.push(Self::asset_name_text(
+                    false,
+                    node_id,
+                    asset.clone(),
+                    asset_dirs,
+                ));
 
                 node_connections
                     .iter()
@@ -500,54 +658,74 @@ impl DepTreePage {
                         None => None,
                     })
                     .fold(viewer, |viewer, (con_node_id, con_asset)| {
-                        viewer.push(Self::asset_name_text(true, con_node_id, con_asset))
+                        viewer.push(Self::asset_name_text(
+                            true,
+                            con_node_id,
+                            con_asset,
+                            asset_dirs,
+                        ))
                     })
                     .push(Space::with_height(Length::Units(10)))
-            });
+            },
+        );
 
-        let graph_info = footer_asset_show_min_info.map(|(node_id, extended)| {
-            let node = dep_tree.get_node(node_id).unwrap();
+        let graph_info = footer_asset_show_min_info
+            .map(|(node_id, extended)| {
+                let Some(node) = dep_tree.get_node(node_id) else {
+                return None;
+            };
 
-            let dependencies = dep_tree.get_node_connections(node_id);
+                let dependencies = dep_tree.get_node_connections(node_id);
 
-            Scrollable::new(graph_footer_scrollable_state)
-                .push(Text::new(format!("Full path: {:?}", node.path)).size(12))
-                .push(Text::new(format!("Origin: {:?}", node.origin)).size(12))
-                .push(
-                    Text::new(format!(
-                        "Dependencies: {}{}",
-                        dependencies.len(),
-                        match extended {
-                            true => format!(
-                                " ({})",
-                                dependencies
-                                    .iter()
-                                    .map(|id| path_to_str(&dep_tree.get_node(*id).unwrap().path))
-                                    .collect_vec()
-                                    .join(", ")
-                            ),
-                            false => String::new(),
-                        }
-                    ))
-                    .size(12),
+                Some(
+                    Scrollable::new(graph_footer_scrollable_state)
+                        .push(Text::new(format!("Full path: {:?}", node.path)).size(12))
+                        .push(Text::new(format!("Origin: {:?}", node.origin)).size(12))
+                        .push(
+                            Text::new(format!(
+                                "Dependencies: {}{}",
+                                dependencies.len(),
+                                match extended {
+                                    true => format!(
+                                        " ({})",
+                                        dependencies
+                                            .iter()
+                                            .map(|id| path_to_str(
+                                                &dep_tree.get_node(*id).unwrap().path
+                                            ))
+                                            .collect_vec()
+                                            .join(", ")
+                                    ),
+                                    false => String::new(),
+                                }
+                            ))
+                            .size(12),
+                        )
+                        .style(style)
+                        .spacing(15)
+                        .into(),
                 )
-                .spacing(15)
-        });
+            })
+            .flatten();
 
-        (graph, graph_info)
+        (min_depth_filters_sort, graph.into(), graph_info)
     }
 
     fn failures_tab<'a>(
         viewer: Scrollable<'a, DepTreePageMsg>,
         dep_tree: &'a DepTree,
     ) -> (
-        Scrollable<'a, DepTreePageMsg>,
-        Option<Scrollable<'a, DepTreePageMsg>>,
+        Element<'a, DepTreePageMsg>,
+        Option<Element<'a, DepTreePageMsg>>,
     ) {
         (
-            dep_tree.failures.iter().fold(viewer, |viewer, failure| {
-                viewer.push(Text::new(failure.to_string()).color([0.9, 0.1, 0.1]))
-            }),
+            dep_tree
+                .failures
+                .iter()
+                .fold(viewer, |viewer, failure| {
+                    viewer.push(Text::new(failure.to_string()).color([0.9, 0.1, 0.1]))
+                })
+                .into(),
             None,
         )
     }
@@ -556,6 +734,8 @@ impl DepTreePage {
         connected: bool,
         node_id: NodeID,
         asset: Rc<Asset>,
+
+        asset_dirs: &AssetDirs,
     ) -> Element<'state, DepTreePageMsg> {
         let name = asset.file_name_str();
         let name_known = name.is_some();
@@ -567,10 +747,23 @@ impl DepTreePage {
             name.unwrap_or_else(|| "...Unknown...".to_string())
         );
 
-        interactive_text_tooltip(
+        let has_changed_in_git_repo = asset_dirs
+            .get_git_repo(asset.origin)
+            .as_ref()
+            .and_then(|repo| {
+                asset_dirs
+                    .get_relative_path(&asset)
+                    .and_then(|relative_path| repo.status_file(&relative_path).ok())
+            })
+            .map(|status| status.is_index_modified() || status.is_wt_modified())
+            .unwrap_or_default();
+
+        interactive_text_tooltip::<DepTreePageMsg, Theme>(
             &text,
             None,
-            Some(if !name_known {
+            Some(if has_changed_in_git_repo {
+                [0.75, 0.75, 0.15]
+            } else if !name_known {
                 [0.8, 0.2, 0.2]
             } else if connected {
                 [0.2, 0.2, 0.8]

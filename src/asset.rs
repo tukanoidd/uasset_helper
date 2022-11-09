@@ -1,17 +1,17 @@
-use std::ffi::OsStr;
 use std::{
     collections::HashSet,
-    ffi::OsString,
-    fmt::Display,
+    ffi::{OsStr, OsString},
+    fmt::{Debug, Display},
     fs::File,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use uasset::{AssetHeader, ImportIterator};
 
 use crate::util::{path_to_str, SplitVecContainer};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Eq, Hash)]
 pub struct AssetError {
     pub path: PathBuf,
     pub reason: String,
@@ -33,6 +33,12 @@ impl AssetError {
             path: path.as_ref().to_path_buf(),
             reason: reason.into(),
         }
+    }
+}
+
+impl PartialEq for AssetError {
+    fn eq(&self, other: &Self) -> bool {
+        self.path.eq(&other.path)
     }
 }
 
@@ -258,29 +264,65 @@ impl Asset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct AssetDirs {
     pub asset_file_path: Option<PathBuf>,
-    pub game_dir: Option<PathBuf>,
+    pub project_dir: Option<PathBuf>,
     pub content_dir: Option<PathBuf>,
     pub engine_dir: Option<PathBuf>,
     pub engine_content_dir: Option<PathBuf>,
     pub plugins_dirs: Vec<PathBuf>,
+
+    pub project_git_repo: Option<Rc<git2::Repository>>,
+    pub engine_git_repo: Option<Rc<git2::Repository>>,
+}
+
+impl Debug for AssetDirs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmtools::write!(
+                f,
+            "AssetDirs: {{\n"
+            |f| {
+                    f.write_str(&format!("\tasset_file_path: {:?},\n", self.asset_file_path))?;
+                    f.write_str(&format!("\tproject_dir: {:?},\n", self.project_dir))?;
+                    f.write_str(&format!("\tcontent_dir: {:?},\n", self.content_dir))?;
+                    f.write_str(&format!("\tengine_dir: {:?},\n", self.engine_dir))?;
+                    f.write_str(&format!("\tengine_content_dir: {:?},\n", self.engine_content_dir))?;
+                    f.write_str(&format!("\tplugin_dirs: {:?},\n", self.plugins_dirs))?;
+
+                    f.write_str(&format!("\tproject_git_repo: {},\n", match self.project_git_repo {
+                        Some(_) => "Exists",
+                        None => "Doesn't Exist",
+                    }))?;
+                    f.write_str(&format!("\tengine_git_repo: {},\n", match self.engine_git_repo {
+                        Some(_) => "Exists",
+                        None => "Doesn't Exist",
+                    }))?;
+                }
+            "}}"
+        )
+    }
 }
 
 impl AssetDirs {
     pub fn new(asset_file_path: Option<PathBuf>, engine_dir: Option<PathBuf>) -> Self {
-        let (game_dir, content_dir, engine_dir, engine_content_dir) =
+        let (project_dir, content_dir, engine_dir, engine_content_dir) =
             Self::get_dirs(&asset_file_path, &engine_dir);
-        let plugins_dirs = Self::get_plugins_dirs(&game_dir, &engine_dir);
+        let plugins_dirs = Self::get_plugins_dirs(&project_dir, &engine_dir);
+
+        let project_git_repo = Self::get_project_git_repo(&project_dir);
+        let engine_git_repo = Self::get_engine_git_repo(&engine_dir);
 
         Self {
             asset_file_path,
-            game_dir,
+            project_dir,
             content_dir,
             engine_dir,
             engine_content_dir,
             plugins_dirs,
+
+            project_git_repo,
+            engine_git_repo,
         }
     }
 
@@ -299,8 +341,8 @@ impl AssetDirs {
         self.asset_file_path.as_ref().map(path_to_str)
     }
 
-    pub fn game_root_str(&self) -> Option<String> {
-        self.game_dir.as_ref().map(path_to_str)
+    pub fn project_dir_str(&self) -> Option<String> {
+        self.project_dir.as_ref().map(path_to_str)
     }
 
     pub fn content_dir_str(&self) -> Option<String> {
@@ -319,8 +361,10 @@ impl AssetDirs {
         self.plugins_dirs.iter().map(path_to_str).collect()
     }
 
-    pub fn get_game_dirs(asset_file_path: &Option<PathBuf>) -> (Option<PathBuf>, Option<PathBuf>) {
-        let game_root = asset_file_path
+    pub fn get_project_dirs(
+        asset_file_path: &Option<PathBuf>,
+    ) -> (Option<PathBuf>, Option<PathBuf>) {
+        let project_dir = asset_file_path
             .as_ref()
             .map(|asset_file_path| {
                 asset_file_path
@@ -330,18 +374,18 @@ impl AssetDirs {
                     .collect::<Vec<_>>()
                     .join("/")
             })
-            .map(|game_root| {
-                game_root
+            .map(|project_dir| {
+                project_dir
                     .strip_prefix('/')
-                    .unwrap_or(&game_root)
+                    .unwrap_or(&project_dir)
                     .to_string()
             })
             .map(PathBuf::from);
-        let content_dir = game_root
+        let content_dir = project_dir
             .as_ref()
-            .map(|game_root| game_root.join("Content"));
+            .map(|project_dir| project_dir.join("Content"));
 
-        (game_root, content_dir)
+        (project_dir, content_dir)
     }
 
     pub fn get_engine_dirs(engine_dir: &Option<PathBuf>) -> (Option<PathBuf>, Option<PathBuf>) {
@@ -368,15 +412,15 @@ impl AssetDirs {
         Option<PathBuf>,
         Option<PathBuf>,
     ) {
-        let (game_root, content_dir, engine_dir, engine_content_dir) = match asset_file_path {
+        let (project_dir, content_dir, engine_dir, engine_content_dir) = match asset_file_path {
             Some(asset_file_path_ref) => match Self::is_engine_path(asset_file_path_ref) {
                 (true, Some((engine_dir, engine_content_dir))) => {
                     (None, None, Some(engine_dir), Some(engine_content_dir))
                 }
                 (false, None) => {
-                    let (game_root, content_dir) = Self::get_game_dirs(&asset_file_path);
+                    let (project_dir, content_dir) = Self::get_project_dirs(&asset_file_path);
 
-                    (game_root, content_dir, None, None)
+                    (project_dir, content_dir, None, None)
                 }
                 _ => (None, None, None, None),
             },
@@ -385,7 +429,7 @@ impl AssetDirs {
 
         match (engine_dir, engine_content_dir) {
             (Some(engine_dir), Some(engine_content_dir)) => (
-                game_root,
+                project_dir,
                 content_dir,
                 Some(engine_dir),
                 Some(engine_content_dir),
@@ -393,7 +437,7 @@ impl AssetDirs {
             _ => {
                 let (engine_dir, engine_content_dir) = Self::get_engine_dirs(&engine_path);
 
-                (game_root, content_dir, engine_dir, engine_content_dir)
+                (project_dir, content_dir, engine_dir, engine_content_dir)
             }
         }
     }
@@ -421,13 +465,13 @@ impl AssetDirs {
     }
 
     pub fn get_plugins_dirs(
-        game_root: &Option<PathBuf>,
+        project_dir: &Option<PathBuf>,
         engine_dir: &Option<PathBuf>,
     ) -> Vec<PathBuf> {
         let mut res = vec![];
 
-        if let Some(game_root) = &game_root {
-            res.push(game_root.join("Plugins"));
+        if let Some(project_dir) = &project_dir {
+            res.push(project_dir.join("Plugins"));
         }
 
         if let Some(engine_dir) = &engine_dir {
@@ -437,18 +481,43 @@ impl AssetDirs {
         res
     }
 
+    pub fn get_git_repos(
+        project_dir: &Option<PathBuf>,
+        engine_dir: &Option<PathBuf>,
+    ) -> (Option<Rc<git2::Repository>>, Option<Rc<git2::Repository>>) {
+        let project_git_repo = Self::get_project_git_repo(project_dir);
+        let engine_git_repo = Self::get_engine_git_repo(engine_dir);
+
+        (project_git_repo, engine_git_repo)
+    }
+
+    pub fn get_project_git_repo(project_dir: &Option<PathBuf>) -> Option<Rc<git2::Repository>> {
+        project_dir
+            .as_ref()
+            .and_then(|project_dir| git2::Repository::open(project_dir).ok())
+            .map(Rc::new)
+    }
+
+    pub fn get_engine_git_repo(engine_dir: &Option<PathBuf>) -> Option<Rc<git2::Repository>> {
+        engine_dir
+            .as_ref()
+            .and_then(|engine_dir| git2::Repository::open(engine_dir).ok())
+            .map(Rc::new)
+    }
+
     pub fn update_asset_file(&mut self, asset_file_path: Option<PathBuf>) {
         self.asset_file_path = asset_file_path;
 
-        let (game_root, content_dir, engine_dir, engine_content_dir) =
+        let (project_dir, content_dir, engine_dir, engine_content_dir) =
             Self::get_dirs(&self.asset_file_path, &self.engine_dir);
 
-        self.game_dir = game_root;
+        self.project_dir = project_dir;
         self.content_dir = content_dir;
         self.engine_dir = engine_dir;
         self.engine_content_dir = engine_content_dir;
 
         self.update_plugin_dirs();
+        self.update_project_git_repo();
     }
 
     pub fn update_engine_dir(&mut self, engine_dir: Option<PathBuf>) {
@@ -458,9 +527,38 @@ impl AssetDirs {
         self.engine_content_dir = engine_content_dir;
 
         self.update_plugin_dirs();
+        self.update_engine_git_repo();
     }
 
     pub fn update_plugin_dirs(&mut self) {
-        self.plugins_dirs = Self::get_plugins_dirs(&self.game_dir, &self.engine_dir);
+        self.plugins_dirs = Self::get_plugins_dirs(&self.project_dir, &self.engine_dir);
+    }
+
+    pub fn update_project_git_repo(&mut self) {
+        self.project_git_repo = Self::get_project_git_repo(&self.project_dir);
+    }
+
+    pub fn update_engine_git_repo(&mut self) {
+        self.engine_git_repo = Self::get_engine_git_repo(&self.engine_dir);
+    }
+
+    pub fn get_git_repo(&self, asset_origin: AssetOrigin) -> Option<Rc<git2::Repository>> {
+        match asset_origin {
+            AssetOrigin::Project | AssetOrigin::ProjectPlugin => self.project_git_repo.clone(),
+            AssetOrigin::Engine | AssetOrigin::EnginePlugin => self.engine_git_repo.clone(),
+        }
+    }
+
+    pub fn get_relative_path(&self, asset: &Asset) -> Option<PathBuf> {
+        match asset.origin {
+            AssetOrigin::Project | AssetOrigin::ProjectPlugin => self
+                .project_dir
+                .as_ref()
+                .and_then(|project_dir| asset.path.strip_prefix(project_dir).ok().map(Into::into)),
+            AssetOrigin::Engine | AssetOrigin::EnginePlugin => self
+                .engine_dir
+                .as_ref()
+                .and_then(|engine_dir| asset.path.strip_prefix(engine_dir).ok().map(Into::into)),
+        }
     }
 }

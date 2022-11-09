@@ -9,16 +9,18 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre;
-use graphviz_rust::cmd::{CommandArg, Format};
-use graphviz_rust::dot_structures::Graph;
-use graphviz_rust::exec;
-use graphviz_rust::printer::PrinterContext;
-use iced::window::Position;
-use iced::{window, Application, Settings};
+use graphviz_rust::{
+    cmd::{CommandArg, Format},
+    dot_structures::Graph,
+    exec,
+    printer::PrinterContext,
+};
+use iced::{
+    window::{self, Position},
+    Application, Settings,
+};
 
-use crate::app::GuiApp;
-use crate::asset::AssetDirs;
-use crate::dependency_tree::DepTree;
+use crate::{app::GuiApp, asset::AssetDirs, dependency_tree::DepTree};
 
 #[derive(Parser)]
 #[command(
