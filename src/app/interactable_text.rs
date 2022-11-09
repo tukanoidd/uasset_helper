@@ -254,7 +254,7 @@ pub fn interactive_text_tooltip<'a, Message, Theme>(
     text: impl Into<String> + Clone,
     tooltip: Option<(String, tooltip::Position, Option<u16>, Option<Theme>)>,
     color: Option<impl Into<Color>>,
-    (on_press, on_shift_press): (Option<Message>, Option<Message>),
+    (on_press, on_shift_press, on_ctrl_press): (Option<Message>, Option<Message>, Option<Message>),
     (on_hover_in, on_shift_hover, on_hover_out): (
         Option<Message>,
         Option<Message>,
@@ -279,6 +279,10 @@ where
 
     if let Some(on_shift_press) = on_shift_press {
         text_widget = text_widget.on_shift_press(on_shift_press);
+    }
+    
+    if let Some(on_ctrl_press) = on_ctrl_press {
+        text_widget = text_widget.on_ctrl_press(on_ctrl_press);
     }
 
     if let Some(on_hover_in) = on_hover_in {

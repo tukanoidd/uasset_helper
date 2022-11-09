@@ -35,7 +35,7 @@ pub fn widget<'a, Message>(
     button_text: &str,
     text: &str,
     tooltip: Option<String>,
-    (text_on_press, text_on_shift_press): (Option<Message>, Option<Message>),
+    (text_on_press, text_on_shift_press, text_on_ctrl_press): (Option<Message>, Option<Message>, Option<Message>),
     button_on_press: Message,
     button_style: Option<impl Into<Box<dyn button::StyleSheet + 'a>>>,
     tooltip_style: Option<impl Into<Box<dyn container::StyleSheet + 'a>>>,
@@ -49,7 +49,7 @@ where
         text,
         tooltip,
         None::<Color>,
-        (text_on_press, text_on_shift_press),
+        (text_on_press, text_on_shift_press, text_on_ctrl_press),
         (None, None, None),
     );
 

@@ -744,7 +744,7 @@ impl DepTreePage {
             "{}{} - {}",
             if connected { "└─── " } else { "" },
             node_id,
-            name.unwrap_or_else(|| "...Unknown...".to_string())
+            name.clone().unwrap_or_else(|| "...Unknown...".to_string())
         );
 
         let has_changed_in_git_repo = asset_dirs
@@ -770,7 +770,18 @@ impl DepTreePage {
             } else {
                 [0.2, 0.8, 0.2]
             }),
-            (Some(DepTreePageMsg::SaveToClipboard(text.clone())), None),
+            (
+                Some(DepTreePageMsg::SaveToClipboard(name.clone().unwrap_or(text.clone()))),
+                Some(DepTreePageMsg::SaveToClipboard(asset.path_str().clone())),
+                name.map(|file_name_str| {
+                    DepTreePageMsg::SaveToClipboard(
+                        file_name_str
+                            .strip_suffix(".uasset")
+                            .map(String::from)
+                            .unwrap_or(file_name_str),
+                    )
+                }),
+            ),
             (
                 Some(DepTreePageMsg::FooterInfoShow(Some((node_id, false)))),
                 Some(DepTreePageMsg::FooterInfoShow(Some((node_id, true)))),

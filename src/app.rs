@@ -203,6 +203,7 @@ impl GuiApp {
                     asset_file_picker_text.clone(),
                 )),
                 asset_file_picker_tooltip.map(GuiAppMessage::SaveTextToClipboard),
+                None,
             ),
             GuiAppMessage::OpenFilePicker(true),
             Some(style),
@@ -222,6 +223,7 @@ impl GuiApp {
                 Some(GuiAppMessage::SaveTextToClipboard(
                     engine_folder_picker_text.clone(),
                 )),
+                None,
                 None,
             ),
             GuiAppMessage::OpenFilePicker(true),
