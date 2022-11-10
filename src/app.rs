@@ -1,23 +1,21 @@
 mod dep_graph;
 mod file_picker;
 mod interactable_text;
-mod styling;
 
 use std::path::PathBuf;
 
 use iced::{
-    button, executor, pick_list, Alignment, Application, Column, Container, Element, Length,
-    PickList, Row, Space, Text,
+    executor,
+    widget::{Column, Container, PickList, Space, Text},
+    Alignment, Application, Element, Length, Theme,
 };
-use iced_native::Command;
+use iced_native::{row, Command};
 
 use crate::{
     app::dep_graph::{DepTreePage, DepTreePageMsg},
     asset::AssetDirs,
     util::save_to_clipboard,
 };
-
-use self::styling::Theme;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AppTab {
@@ -63,13 +61,8 @@ pub struct GuiApp {
     asset_dirs: AssetDirs,
 
     // State
-    style: Theme,
+    theme: Theme,
     current_tab: AppTab,
-
-    // Header
-    pick_list_tabs_state: pick_list::State<AppTab>,
-    asset_file_picker_button_state: button::State,
-    engine_folder_picker_button_state: button::State,
 
     // Body
     dep_tree_page: DepTreePage,
@@ -78,6 +71,7 @@ pub struct GuiApp {
 impl Application for GuiApp {
     type Executor = executor::Default;
     type Message = GuiAppMessage;
+    type Theme = Theme;
     type Flags = AssetDirs;
 
     fn new(asset_dirs: Self::Flags) -> (Self, Command<Self::Message>) {
@@ -90,16 +84,11 @@ impl Application for GuiApp {
                 asset_dirs: asset_dirs.clone(),
 
                 // State
-                style: Theme::Dark,
+                theme: Theme::Dark,
                 current_tab: AppTab::DependencyTree,
 
-                // Header
-                pick_list_tabs_state: Default::default(),
-                asset_file_picker_button_state: Default::default(),
-                engine_folder_picker_button_state: Default::default(),
-
                 // Body
-                dep_tree_page: DepTreePage::new(Theme::Dark, asset_dirs),
+                dep_tree_page: DepTreePage::new(asset_dirs),
             },
             Command::none(),
         )
@@ -141,20 +130,11 @@ impl Application for GuiApp {
         Command::none()
     }
 
-    fn view(&mut self) -> Element<'_, Self::Message> {
-        let header = Self::header(
-            &self.asset_dirs,
-            self.style,
-            self.current_tab,
-            &mut self.pick_list_tabs_state,
-            &mut self.asset_file_picker_button_state,
-            &mut self.engine_folder_picker_button_state,
-        );
+    fn view(&self) -> Element<'_, Self::Message> {
+        let header = Self::header(&self.asset_dirs, self.current_tab);
 
         let body = match self.current_tab {
-            AppTab::AssetInfo => Container::new(Text::new("Asset Info"))
-                .style(self.style)
-                .into(),
+            AppTab::AssetInfo => Container::new(Text::new("Asset Info")).into(),
             AppTab::DependencyTree => self.dep_tree_page.view().map(GuiAppMessage::DepTreePage),
         };
 
@@ -163,85 +143,68 @@ impl Application for GuiApp {
                 .spacing(20)
                 .align_items(Alignment::Center),
         )
-        .style(self.style)
         .padding(20)
         .into()
+    }
+
+    fn theme(&self) -> Self::Theme {
+        self.theme.clone()
     }
 }
 
 impl GuiApp {
-    fn header<'a>(
-        asset_dirs: &AssetDirs,
-
-        style: Theme,
-        current_tab: AppTab,
-
-        pick_list_tabs_state: &'a mut pick_list::State<AppTab>,
-        asset_file_picker_button_state: &'a mut button::State,
-        engine_folder_picker_button_state: &'a mut button::State,
-    ) -> Element<'a, GuiAppMessage> {
+    fn header<'a>(asset_dirs: &AssetDirs, current_tab: AppTab) -> Element<'a, GuiAppMessage> {
         let pick_list_tabs = PickList::new(
-            pick_list_tabs_state,
             &[AppTab::AssetInfo, AppTab::DependencyTree][..],
             Some(current_tab),
             GuiAppMessage::TabChanged,
         )
-        .style(style)
-        .width(Length::FillPortion(2))
-        .into();
+        .width(Length::FillPortion(2));
 
         let asset_file_picker_text = asset_dirs.asset_file_name_str().unwrap_or_default();
         let asset_file_picker_tooltip = asset_dirs.asset_file_path_str();
 
         let asset_file_picker = file_picker::widget(
-            asset_file_picker_button_state,
             "Pick Asset",
-            &asset_file_picker_text,
+            asset_file_picker_text.clone(),
             asset_file_picker_tooltip.clone(),
             (
-                Some(GuiAppMessage::SaveTextToClipboard(
-                    asset_file_picker_text.clone(),
-                )),
+                Some(GuiAppMessage::SaveTextToClipboard(asset_file_picker_text)),
                 asset_file_picker_tooltip.map(GuiAppMessage::SaveTextToClipboard),
                 None,
             ),
             GuiAppMessage::OpenFilePicker(true),
-            Some(style),
-            Some(style),
         )
-        .width(Length::FillPortion(3))
-        .into();
+        .width(Length::FillPortion(3));
 
         let engine_folder_picker_text = asset_dirs.engine_dir_str().unwrap_or_default();
 
         let engine_folder_picker = file_picker::widget(
-            engine_folder_picker_button_state,
             "Pick Engine Folder",
-            &engine_folder_picker_text,
+            engine_folder_picker_text.clone(),
             None,
             (
                 Some(GuiAppMessage::SaveTextToClipboard(
-                    engine_folder_picker_text.clone(),
+                    engine_folder_picker_text,
                 )),
                 None,
                 None,
             ),
             GuiAppMessage::OpenFilePicker(true),
-            Some(style),
-            Some(style),
         )
-        .width(Length::FillPortion(3))
-        .into();
+        .width(Length::FillPortion(3));
 
-        Row::with_children(vec![
-            pick_list_tabs,
-            Space::with_width(Length::FillPortion(1)).into(),
-            asset_file_picker,
-            engine_folder_picker,
-        ])
-        .spacing(10)
+        Container::new(
+            row![
+                pick_list_tabs,
+                Space::with_width(Length::FillPortion(1)),
+                asset_file_picker,
+                engine_folder_picker,
+            ]
+            .spacing(10)
+            .width(Length::Shrink),
+        )
         .max_height(30)
-        .width(Length::Shrink)
         .into()
     }
 }

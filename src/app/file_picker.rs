@@ -1,6 +1,12 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 
-use iced::{button, container, tooltip, Alignment, Button, Color, Row, Text};
+use iced::{
+    widget::{tooltip, Row, Text},
+    Alignment, Color, Renderer,
+};
+use iced_native::row;
+use iced_native::widget::button;
 use rfd::AsyncFileDialog;
 
 use crate::app::interactable_text::interactive_text_tooltip;
@@ -31,19 +37,20 @@ pub async fn open(asset: bool) -> Option<PathBuf> {
 }
 
 pub fn widget<'a, Message>(
-    state: &'a mut button::State,
-    button_text: &str,
-    text: &str,
+    button_text: impl Into<Cow<'a, str>>,
+    text: impl Into<Cow<'a, str>> + Clone,
     tooltip: Option<String>,
-    (text_on_press, text_on_shift_press, text_on_ctrl_press): (Option<Message>, Option<Message>, Option<Message>),
+    (text_on_press, text_on_shift_press, text_on_ctrl_press): (
+        Option<Message>,
+        Option<Message>,
+        Option<Message>,
+    ),
     button_on_press: Message,
-    button_style: Option<impl Into<Box<dyn button::StyleSheet + 'a>>>,
-    tooltip_style: Option<impl Into<Box<dyn container::StyleSheet + 'a>>>,
 ) -> Row<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let tooltip = tooltip.map(|t| (t, tooltip::Position::Bottom, None, tooltip_style));
+    let tooltip = tooltip.map(|t| (t, tooltip::Position::Bottom, None));
 
     let text = interactive_text_tooltip(
         text,
@@ -53,13 +60,9 @@ where
         (None, None, None),
     );
 
-    let mut button = Button::new(state, Text::new(button_text)).on_press(button_on_press);
+    let button = button::<'a, Message, Renderer>(Text::new(button_text)).on_press(button_on_press);
 
-    if let Some(button_style) = button_style {
-        button = button.style(button_style);
-    };
-
-    Row::with_children(vec![button.into(), text])
+    row![button, text]
         .align_items(Alignment::Center)
         .spacing(10)
 }

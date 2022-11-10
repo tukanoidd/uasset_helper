@@ -58,6 +58,7 @@ impl DepTree {
         log::debug!("Got the root asset node!");
 
         let root_node_id = new_id();
+        known_paths.insert(root_node.path.clone());
         nodes.insert(root_node_id, root_node);
 
         // Tracking the depth of the "recursion" of the dependecy chain
@@ -218,9 +219,21 @@ impl DepTree {
     pub fn get_node_connections(&self, id: NodeID) -> Vec<NodeID> {
         self.node_connections.get(&id).cloned().unwrap_or_default()
     }
-    
+
     pub fn get_recurse_depth(&self, id: NodeID) -> Option<u32> {
         self.recurse_depths.get(&id).copied()
+    }
+
+    pub fn get_parent_node_id(&self, id: NodeID) -> Option<NodeID> {
+        self.node_connections
+            .iter()
+            .find(|(_, children)| children.contains(&id))
+            .map(|(parent, _)| *parent)
+    }
+
+    pub fn get_parent_node(&self, id: NodeID) -> Option<Rc<Asset>> {
+        self.get_parent_node_id(id)
+            .and_then(|parent_id| self.get_node(parent_id))
     }
 
     pub fn print_node_paths(&self) {

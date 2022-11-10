@@ -121,10 +121,11 @@ fn run_app(asset_dirs: AssetDirs) -> eyre::Result<()> {
     let settings = Settings {
         id: None,
         window: window::Settings {
-            size: (1000, 600),
+            size: (1600, 800),
             position: Position::Centered,
-            min_size: Some((800, 600)),
+            min_size: Some((1400, 800)),
             max_size: None,
+            visible: true,
             resizable: true,
             decorations: true,
             transparent: false,

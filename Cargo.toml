@@ -22,9 +22,10 @@ enum-iterator = "1.2.0"
 uasset = { version = "0.4.1", features = ["commandline-tool"] }
 num-traits = "0.2.15"
 
-iced = { version = "0.4.2", features = ["image", "pure", "svg", "tokio"] }
-iced_native = "0.5.1"
-iced_aw = { version = "0.2.0", features = ["icons"] }
+iced = { version = "0.5", features = ["image", "svg", "tokio"] }
+iced_native = "0.6"
+#iced_aw = { git = "https://github.com/iced-rs/iced_aw", branch = "beta", features = ["icons"] }
+iced_aw = { path = "external/iced_aw", features = ["icons"] }
 graphviz-rust = "0.3.0"
 rfd = "0.10.0"
 git2 = "0.15"
